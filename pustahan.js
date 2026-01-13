@@ -351,3 +351,4 @@ window.onload = () => {
   loadTeamSelect();
   render();
 };
+
