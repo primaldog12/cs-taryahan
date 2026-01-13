@@ -195,6 +195,50 @@ function markPaidOut(bettorId) {
   render();
 }
 
+/* ================= ADMIN CASH CHECK ================= */
+
+function getTotalPaidAmount() {
+  let total = 0;
+
+  for (const team of ["team1", "team2"]) {
+    for (const b of match[team].bettors) {
+      if (b.paid) total += b.amt;
+    }
+  }
+  return total;
+}
+
+function checkAdminCash(adminCash) {
+  const paidTotal = getTotalPaidAmount();
+  const diff = adminCash - paidTotal;
+
+  if (diff === 0) return { status: "MATCH", difference: 0 };
+  if (diff < 0) return { status: "SHORT", difference: diff };
+  return { status: "EXCESS", difference: diff };
+}
+
+function renderAdminCash() {
+  if (!match) return;
+
+  const adminCash = Number(document.getElementById("adminCash").value);
+  if (isNaN(adminCash)) return alert("Enter admin cash");
+
+  const paidTotal = getTotalPaidAmount();
+  const res = checkAdminCash(adminCash);
+
+  cashResult.innerHTML = `
+    <p><strong>Total PAID Bets:</strong> ${paidTotal}</p>
+    <p><strong>Admin Cash:</strong> ${adminCash}</p>
+    <p><strong>Status:</strong>
+      <span style="color:${
+        res.status === "MATCH" ? "green" :
+        res.status === "SHORT" ? "red" : "orange"
+      }">${res.status}</span>
+    </p>
+    <p><strong>Difference:</strong> ${res.difference}</p>
+  `;
+}
+
 /* ================= UI ================= */
 
 function loadTeamSelect() {
@@ -243,12 +287,8 @@ function renderList(team) {
             </select>
 
             ${!b.paid ? `
-              <button type="button" onclick="switchBet('${b.id}')">Switch</button>
-              <button type="button"
-                onclick="deleteBet('${b.id}')"
-                style="color:red">
-                Delete
-              </button>
+              <button onclick="switchBet('${b.id}')">Switch</button>
+              <button onclick="deleteBet('${b.id}')" style="color:red">Delete</button>
             ` : `<em> (LOCKED)</em>`}
           ` : ""}
 
@@ -257,8 +297,7 @@ function renderList(team) {
             ${isWinner ? `
               <br>Payout:
               <strong>${getFinalPayout(team, b).toFixed(2)}</strong><br>
-
-              <button type="button"
+              <button
                 ${b.paidOut ? "disabled" : ""}
                 onclick="markPaidOut('${b.id}')">
                 ${b.paidOut ? "PAID OUT" : "PAY"}
@@ -282,10 +321,10 @@ function renderSettlementButtons() {
   }
 
   el.innerHTML = `
-    <button type="button" onclick="settleMatch('team1')">
+    <button onclick="settleMatch('team1')">
       Declare ${match.team1.name} Winner
     </button>
-    <button type="button" onclick="settleMatch('team2')">
+    <button onclick="settleMatch('team2')">
       Declare ${match.team2.name} Winner
     </button>
   `;
