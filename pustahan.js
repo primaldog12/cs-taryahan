@@ -30,7 +30,10 @@ function clearMatch() {
 /* ================= BETTORS ================= */
 
 function addBet() {
-  if (!match) return alert("No active match");
+  if (!match || match.status !== "OPEN") {
+    alert("Betting is closed");
+    return;
+  }
 
   const name = bettorName.value.trim();
   const amt = Number(betAmount.value);
@@ -42,13 +45,46 @@ function addBet() {
     id: crypto.randomUUID(),
     name,
     amt,
-    paid: false,    // collection
-    paidOut: false  // payout
+    paid: false,
+    paidOut: false
   });
 
   match[team].total += amt;
+
+  bettorName.value = "";
+  betAmount.value = "";
+
   save();
   render();
+}
+
+/* ================= DELETE BET (BLOCKED IF PAID) ================= */
+
+function deleteBet(bettorId) {
+  if (!match || match.status !== "OPEN") {
+    alert("Betting is closed");
+    return;
+  }
+
+  for (const team of ["team1", "team2"]) {
+    const bettor = match[team].bettors.find(b => b.id === bettorId);
+    if (!bettor) continue;
+
+    if (bettor.paid) {
+      alert("Cannot delete a PAID bet");
+      return;
+    }
+
+    if (!confirm("Delete this bet?")) return;
+
+    match[team].bettors =
+      match[team].bettors.filter(b => b.id !== bettorId);
+    match[team].total -= bettor.amt;
+
+    save();
+    render();
+    return;
+  }
 }
 
 /* ================= PAID / UNPAID ================= */
@@ -81,29 +117,63 @@ function switchBet(bettorId) {
     const found = match[t].bettors.find(b => b.id === bettorId);
     if (found) { bettor = found; fromTeam = t; break; }
   }
-  if (!bettor || !fromTeam) return;
+  if (!bettor) return;
+
+  if (bettor.paid) {
+    alert("Cannot switch a PAID bet");
+    return;
+  }
 
   const toTeam = fromTeam === "team1" ? "team2" : "team1";
-  const moved = { ...bettor };
 
   match[fromTeam].bettors =
     match[fromTeam].bettors.filter(b => b.id !== bettorId);
   match[fromTeam].total -= bettor.amt;
 
-  match[toTeam].bettors.push(moved);
+  match[toTeam].bettors.push({ ...bettor });
   match[toTeam].total += bettor.amt;
 
   save();
   render();
 }
 
-/* ================= SETTLEMENT ================= */
+/* ================= ODDS + PAYOUT ================= */
+
+function getOdds(team) {
+  const myTotal = match[team].total;
+  const otherTeam = team === "team1" ? "team2" : "team1";
+  const otherTotal = match[otherTeam].total;
+
+  if (myTotal <= 0 || otherTotal <= 0) return 0;
+  return otherTotal / myTotal;
+}
+
+function getEstimatedPayout(team, bettor) {
+  return bettor.amt * getOdds(team);
+}
+
+function getFinalPayout(team, bettor) {
+  if (match.winner !== team) return 0;
+  return getEstimatedPayout(team, bettor);
+}
+
+/* ================= SETTLEMENT (WITH CONFIRMATION) ================= */
 
 function settleMatch(winningTeam) {
   if (!match || match.status !== "OPEN") {
     alert("Match already settled");
     return;
   }
+
+  const teamName = match[winningTeam].name;
+
+  const ok = confirm(
+    `CONFIRM SETTLEMENT\n\n` +
+    `Declare "${teamName}" as MATCH WINNER?\n\n` +
+    `This action CANNOT be undone.`
+  );
+
+  if (!ok) return;
 
   match.status = "FINISHED";
   match.winner = winningTeam;
@@ -162,18 +232,32 @@ function renderList(team) {
           ${b.name} — ${b.amt}
 
           ${match.status === "OPEN" ? `
+            <br><small>
+              Estimated Payout:
+              <strong>${getEstimatedPayout(team, b).toFixed(2)}</strong>
+            </small><br>
+
             <select onchange="updatePaidStatus('${team}','${b.id}',this.value)">
               <option value="unpaid" ${!b.paid ? "selected" : ""}>UNPAID</option>
               <option value="paid" ${b.paid ? "selected" : ""}>PAID</option>
             </select>
-            <button type="button" onclick="switchBet('${b.id}')">Switch</button>
+
+            ${!b.paid ? `
+              <button type="button" onclick="switchBet('${b.id}')">Switch</button>
+              <button type="button"
+                onclick="deleteBet('${b.id}')"
+                style="color:red">
+                Delete
+              </button>
+            ` : `<em> (LOCKED)</em>`}
           ` : ""}
 
           ${match.status === "FINISHED" ? `
             <br><strong>${isWinner ? "WIN" : "LOSE"}</strong>
             ${isWinner ? `
-              <br>Payout: <strong>${getFinalPayout(team, b).toFixed(2)}</strong>
-              <br>
+              <br>Payout:
+              <strong>${getFinalPayout(team, b).toFixed(2)}</strong><br>
+
               <button type="button"
                 ${b.paidOut ? "disabled" : ""}
                 onclick="markPaidOut('${b.id}')">
@@ -187,7 +271,7 @@ function renderList(team) {
   `;
 }
 
-/* ================= SETTLEMENT BUTTONS (TEAM NAMES) ================= */
+/* ================= SETTLEMENT BUTTONS ================= */
 
 function renderSettlementButtons() {
   const el = document.getElementById("settlementButtons");
@@ -204,28 +288,6 @@ function renderSettlementButtons() {
     <button type="button" onclick="settleMatch('team2')">
       Declare ${match.team2.name} Winner
     </button>
-  `;
-}
-
-/* ================= ADMIN CASH CHECK ================= */
-
-function renderAdminCash() {
-  const adminCash = Number(adminCashInput = document.getElementById("adminCash").value);
-  if (!adminCash && adminCash !== 0) return alert("Enter admin cash");
-
-  const paidTotal = getTotalPaidAmount();
-  const res = checkAdminCash(adminCash);
-
-  cashResult.innerHTML = `
-    <p><strong>Total PAID Bets:</strong> ${paidTotal}</p>
-    <p><strong>Admin Cash:</strong> ${adminCash}</p>
-    <p><strong>Status:</strong>
-      <span style="color:${
-        res.status === "MATCH" ? "green" :
-        res.status === "SHORT" ? "red" : "orange"
-      }">${res.status}</span>
-    </p>
-    <p><strong>Difference:</strong> ${res.difference}</p>
   `;
 }
 
